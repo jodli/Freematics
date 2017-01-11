@@ -2,17 +2,22 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <FreematicsONE.h>
-//#include "config.h"
-#include "datalogger.h"
 #include "wifi.h"
+
+#if ENABLE_DATA_LOG
+#include <SD.h>
+#endif
+#include "datalogger.h"
 
 // logger states
 #define STATE_SD_READY 0x1
 #define STATE_OBD_READY 0x2
-#define STATE_GPS_READY 0x4
 #define STATE_MEMS_READY 0x8
 #define STATE_WIFI_READY 0x10
+#define STATE_FILE_READY 0x20
 #define STATE_CONNECTED 0x40
+
+static uint8_t lastFileSize = 0;
 
 class CTeleLogger : public COBDWIFI, public CDataLogger, public CMPU6050
 {
@@ -20,11 +25,14 @@ public:
   CTeleLogger() : state(0), feedid(0)
   {
   }
-  
+
   void setup()
   {
+    delay(500);
     // this will init SPI communication
     begin();
+    Serial.print("Firmware Ver. ");
+    Serial.println(version);
 
   #if USE_MEMS
     // start I2C communication
@@ -74,130 +82,73 @@ public:
     }
   #endif //USE_OBD
 
-    Serial.println();
-    delay(1000);
-  }
-/*
-  void regDataFeed(byte action)
-  {
-    // action == 0 for registering a data feed, action == 1 for de-registering a data feed
-
-    // retrieve VIN
-    char vin[20] = {0};
-    if (action == 0)
+  #if ENABLE_DATA_LOG
+    Serial.print("SD... ");
+    uint16_t volsize = initSD();
+    if (volsize)
     {
-      // retrieve VIN
-      if (getVIN(buffer, sizeof(buffer)))
-      {
-        strncpy(vin, buffer, sizeof(vin) - 1);
-        Serial.print("#VIN:");
-        Serial.println(vin);
-      }
+      Serial.print(volsize);
+      Serial.println("MB");
     }
     else
     {
-      if (feedid == 0)
+      Serial.println("NO");
+    }
+  #endif
+
+    Serial.println();
+    delay(1000);
+  }
+
+#if ENABLE_DATA_LOG
+  uint16_t initSD()
+  {
+    state &= ~STATE_SD_READY;
+    pinMode(SS, OUTPUT);
+    Sd2Card card;
+    uint32_t volumesize = 0;
+
+    if (card.init(SPI_HALF_SPEED, SD_CS_PIN))
+    {
+      SdVolume volume;
+      if (volume.init(card))
       {
-        return;
+        volumesize = volume.blocksPerCluster();
+        volumesize >>= 1; // 512 bytes per block
+        volumesize *= volume.clusterCount();
+        volumesize /= 1000;
       }
     }
 
-    wifiState = WIFI_READY;
-    for (byte n = 0; ;n++)
+    if (SD.begin(SD_CS_PIN))
     {
-      // make sure OBD is still accessible
-      if (readSpeed() == -1)
-      {
-        //reconnect();
-      }
-
-      // start a HTTP connection (TCP)
-      httpConnect();
-      do
-      {
-        Serial.print('.');
-        delay(200);
-      } while (!httpIsConnected() && wifiState != WIFI_HTTP_ERROR);
-
-      if (wifiState == WIFI_HTTP_ERROR)
-      {
-        Serial.println(buffer);
-        Serial.println("Unable to connect");
-        httpClose();
-        if (n >= MAX_ERRORS_RESET)
-        {
-          standby();
-        }
-        delay(5000);
-        wifiState = WIFI_READY;
-        continue;
-      }
-
-      // generate HTTP URL
-      if (action == 0)
-      {
-        sprintf_P(buffer, PSTR("/%s/reg?vin=%s"), SERVER_KEY, vin);
-      }
-      else
-      {
-        sprintf_P(buffer, PSTR("/%s/reg?id=%d&off=1"), SERVER_KEY, feedid);
-      }
-
-      // send HTTP request
-      if (!httpSend(HTTP_GET, buffer, true) || !xbReceive(buffer, sizeof(buffer), MAX_CONN_TIME, "SEND OK"))
-      {
-        Serial.println("Error sending");
-        httpClose();
-        delay(3000);
-        continue;
-      }
-
-      delay(500);
-      // receive and parse response
-      xbReceive(buffer, sizeof(buffer), MAX_CONN_TIME, "\"id\"");
-      char *p = strstr(buffer, "\"id\"");
-      if (!p)
-      {
-        if (!xbReceive(buffer, sizeof(buffer), MAX_CONN_TIME, "\"id\""))
-        {
-          httpClose();
-          delay(3000);
-          continue;
-        }
-      }
-
-      if (action == 0)
-      {
-        // receive HTTP response
-        // grab the data we need from HTTP response payload
-        // parse feed ID
-        p = strstr(buffer, "\"id\"");
-        if (p)
-        {
-          int m = atoi(p + 5);
-          if (m > 0)
-          {
-            // keep the feed ID needed for data pushing
-            feedid = m;
-            Serial.print("#FEED ID:");
-            Serial.println(feedid);
-            state |= STATE_CONNECTED;
-            break;
-          }
-        }
-      }
-      else
-      {
-        httpClose();
-        break;
-      }
-
-      Serial.println(buffer);
-      httpClose();
-      delay(3000);
+      state |= STATE_SD_READY;
+      return volumesize;
+    }
+    else
+    {
+      return 0;
     }
   }
-*/
+  void flushData()
+  {
+    // flush SD data every 1KB
+    byte dataSizeKB = dataSize >> 10;
+    if (dataSizeKB != lastFileSize)
+    {
+      flushFile();
+      lastFileSize = dataSizeKB;
+    #if MAX_LOG_FILE_SIZE
+      if (dataSize >= 1024L * MAX_LOG_FILE_SIZE)
+      {
+        closeFile();
+        state &= ~STATE_FILE_READY;
+      }
+    #endif
+    }
+  }
+#endif
+
   void loop()
   {
     // the main loop
@@ -229,34 +180,29 @@ public:
     {
       if (millis() > nextConnTime)
       {
+      #if USE_ESP8266
         // process HTTP state machine
         processHttp();
+      #endif
 
       #if USE_OBD
         // continously read speed for calculating trip distance
         if (state & STATE_OBD_READY)
         {
-            readSpeed();
+          readSpeed();
         }
       #endif //USE_OBD
 
-        // error and exception handling
-        if (wifiState == WIFI_READY)
+        if (deviceTemp >= COOLING_DOWN_TEMP)
         {
-          if (errors > 10)
-          {
-            //reconnect();
-          }
-          else if (deviceTemp >= COOLING_DOWN_TEMP)
-          {
-            // device too hot, slow down communication a bit
-            Serial.print("Cool down (");
-            Serial.print(deviceTemp);
-            Serial.println(" C)");
-            delay(5000);
-            break;
-          }
+          // device too hot, slow down communication a bit
+          Serial.print("Cool down (");
+          Serial.print(deviceTemp);
+          Serial.println(" C)");
+          delay(5000);
+          break;
         }
+
       }
     } while (millis() - start < MIN_LOOP_TIME);
   }
@@ -287,7 +233,7 @@ private:
       }
     }
   }
-  
+
   void processHttp()
   {
     // state machine for HTTP communications
@@ -300,7 +246,7 @@ private:
       if (cacheBytes > 0)
       {
         // and there is data in cache to send
-        sprintf_P(buffer, PSTR("/%s/post?id=%u"), SERVER_KEY, feedid);
+        sprintf_P(buffer, PSTR("/post?id=%u"), feedid);
         // send HTTP POST request with cached data as payload
         if (httpSend(HTTP_POST, buffer, true, cache, cacheBytes))
         {
@@ -517,11 +463,11 @@ private:
       // check movement
       if (motion > START_MOTION_THRESHOLD)
       {
-        Serial.print("Detected motion... ");
+        Serial.print("MOTION");
         Serial.println(motion);
         // try OBD reading
         leaveLowPowerMode();
-        if (init()) 
+        if (init())
         {
           // OBD is accessible
           break;
@@ -553,14 +499,14 @@ private:
       int temp; // device temperature (in 0.1 celcius degree)
       memsRead(acc, 0, 0, &temp);
 
-      if (accCount >= 250) 
+      if (accCount >= 250)
       {
         accSum[0] >>= 1;
         accSum[1] >>= 1;
         accSum[2] >>= 1;
         accCount >>= 1;
       }
-      
+
       accSum[0] += acc[0];
       accSum[1] += acc[1];
       accSum[2] += acc[2];
@@ -572,7 +518,7 @@ private:
   void dataIdleLoop()
   {
     // do something while waiting for data on SPI
-    if (state & STATE_MEMS_READY) 
+    if (state & STATE_MEMS_READY)
     {
       readMEMS();
     }
@@ -583,13 +529,12 @@ private:
   uint16_t feedid;
 };
 
-CTeleLogger logger;
+static CTeleLogger logger;
 
 void setup()
 {
   // initialize hardware serial (for USB and BLE)
   logger.initSender();
-  delay(500);
   // perform initializations
   logger.setup();
 }

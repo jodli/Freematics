@@ -30,8 +30,8 @@ public:
   void initSender()
   {
   #if ENABLE_DATA_OUT
-    SerialRF.begin(STREAM_BAUDRATE);
-    SerialRF.println(ID_STR);
+    Serial.begin(STREAM_BAUDRATE);
+    Serial.println(ID_STR);
   #endif //ENABLE_DATA_OUT
   }
 
@@ -114,8 +114,8 @@ public:
   #endif //ENABLE_DATA_CACHE
 
   #if ENABLE_DATA_OUT
-    SerialRF.write(buf, len);
-    SerialRF.println();
+    Serial.write(buf, len);
+    Serial.println();
   #endif //ENABLE_DATA_OUT
   }
 
@@ -230,7 +230,7 @@ public:
   uint32_t dataTime;
   uint32_t dataSize;
 
-#if ENABLE_DATA_CACHE*
+#if ENABLE_DATA_CACHE
   void purgeCache()
   {
     cacheBytes = 0;

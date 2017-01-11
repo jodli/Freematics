@@ -6,7 +6,7 @@
 **************************************/
 
 // enable(1)/disable(0) data logging (if SD card is present)
-#define ENABLE_DATA_LOG 1
+#define ENABLE_DATA_LOG 0
 #define FILE_NAME_FORMAT "/DAT%05d.CSV"
 
 // enable(1)/disable(0) data streaming
@@ -91,5 +91,8 @@
 #define MIN_LOOP_TIME 500 /* ms */
 #define COOLING_DOWN_TEMP 65 /* celsius degrees */
 #define ID_STR "#FREEMATICS"
+
+// SD pin
+#define SD_CS_PIN 10
 
 #endif // CONFIG_H_INCLUDED
