@@ -17,7 +17,7 @@ typedef struct {
     char name[3];
 } PID_NAME;
 
-class CDataLogger 
+class CDataLogger
 {
 public:
   CDataLogger() : m_lastDataTime(0), dataTime(0), dataSize(0)
@@ -56,9 +56,9 @@ public:
   void record(const char* buf, byte len)
   {
   #if ENABLE_DATA_LOG
-    char tmp[12];
-    byte n = genTimestamp(tmp, dataSize == 0);
-    dataSize += sdfile.write(tmp, n);
+    char timestamp[12];
+    byte n = genTimestamp(timestamp, dataSize == 0);
+    dataSize += sdfile.write(timestamp, n);
     dataSize += sdfile.write(buf, len);
     sdfile.println();
     dataSize += 3;
@@ -111,10 +111,6 @@ public:
       cache[cacheBytes++] = ' ';
     }
     cache[cacheBytes] = 0;
-  #else //ENABLE_DATA_CACHE
-    //char tmp[12];
-    //byte n = genTimestamp(tmp, dataTime >= m_lastDataTime + 100);
-    //SerialRF.write(tmp, n);
   #endif //ENABLE_DATA_CACHE
 
   #if ENABLE_DATA_OUT
@@ -189,24 +185,32 @@ public:
     char filename[24] = "/FRMATICS";
 
     dataSize = 0;
-    if (SD.exists(filename)) {
-        for (fileIndex = 1; fileIndex; fileIndex++) {
-            sprintf_P(filename + 9, PSTR(FILE_NAME_FORMAT), fileIndex);
-            if (!SD.exists(filename)) {
-                break;
-            }
+    if (SD.exists(filename))
+    {
+      for (fileIndex = 1; fileIndex; fileIndex++)
+      {
+        sprintf_P(filename + 9, PSTR(FILE_NAME_FORMAT), fileIndex);
+        if (!SD.exists(filename))
+        {
+          break;
         }
-        if (fileIndex == 0)
-            return 0;
-    } else {
-        SD.mkdir(filename);
-        fileIndex = 1;
-        sprintf_P(filename + 9, PSTR(FILE_NAME_FORMAT), 1);
+      }
+      if (fileIndex == 0)
+      {
+        return 0;
+      }
+    }
+    else
+    {
+      SD.mkdir(filename);
+      fileIndex = 1;
+      sprintf_P(filename + 9, PSTR(FILE_NAME_FORMAT), 1);
     }
 
     sdfile = SD.open(filename, FILE_WRITE);
-    if (!sdfile) {
-        return 0;
+    if (!sdfile)
+    {
+      return 0;
     }
     m_lastDataTime = dateTime;
     return fileIndex;
@@ -214,19 +218,19 @@ public:
 
   void closeFile()
   {
-      sdfile.close();
+    sdfile.close();
   }
 
   void flushFile()
   {
-      sdfile.flush();
+    sdfile.flush();
   }
 #endif //ENABLE_DATA_LOG
 
   uint32_t dataTime;
   uint32_t dataSize;
 
-#if ENABLE_DATA_CACHE
+#if ENABLE_DATA_CACHE*
   void purgeCache()
   {
     cacheBytes = 0;
