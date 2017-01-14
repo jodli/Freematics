@@ -182,7 +182,7 @@ public:
       {
       #if USE_ESP8266
         // process HTTP state machine
-        processHttp();
+        processTcp();
       #endif
 
       #if USE_OBD
@@ -234,7 +234,7 @@ private:
     }
   }
 
-  void processHttp()
+  void processTcp()
   {
     // state machine for HTTP communications
     nextConnTime = millis() + 200;
@@ -245,16 +245,17 @@ private:
       // ready for doing next HTTP request
       if (cacheBytes > 0)
       {
-        // and there is data in cache to send
-        sprintf_P(buffer, PSTR("/post?id=%u"), feedid);
         // send HTTP POST request with cached data as payload
-        if (httpSend(HTTP_POST, buffer, true, cache, cacheBytes))
+        
+        char* payload = "payload";
+        int payloadBytes = 8;
+        if (tcpSend(payload, payloadBytes))
         {
           // success
           Serial.print("Sending ");
           Serial.print(cacheBytes);
           Serial.println(" bytes");
-          //Serial.println(cache);
+          Serial.println(cache);
           purgeCache();
           wifiState = WIFI_SENDING;
         }
@@ -268,13 +269,13 @@ private:
     case WIFI_DISCONNECTED:
       // attempt to connect again
       xbPurge();
-      httpConnect();
+      tcpConnect();
       wifiState = WIFI_CONNECTING;
       connCount = 0;
       break;
     case WIFI_CONNECTING:
       // in the progress of connecting
-      if (httpIsConnected())
+      if (tcpIsConnected())
       {
         wifiState = WIFI_READY;
         state |= STATE_CONNECTED;
@@ -283,7 +284,7 @@ private:
       break;
     case WIFI_SENDING:
       // in the progress of data sending
-      if (httpIsSent() || strstr(buffer, "+IPD"))
+      if (tcpIsSent() || strstr(buffer, "+IPD"))
       {
         Serial.println("Sent");
         connErrors = 0;
@@ -293,17 +294,17 @@ private:
       break;
     case WIFI_RECEIVING:
       // in the progress of data receiving
-      if (httpRead())
+      if (tcpReceive())
       {
         // success
         connCount++;
         Serial.print("Success #");
         Serial.println(connCount);
-        //Serial.println(buffer);
+        Serial.println(buffer);
         if (connCount >= MAX_HTTP_CONNS)
         {
           // re-establish TCP connection
-          httpClose();
+          tcpDisconnect();
           wifiState = WIFI_DISCONNECTED;
         }
         else
@@ -319,7 +320,7 @@ private:
       if (connErrors >= MAX_ERRORS_RECONNECT || strstr_P(buffer, PSTR("link is not")))
       {
         // reset WIFI
-        httpClose();
+        tcpDisconnect();
         if (connErrors >= MAX_ERRORS_RESET)
         {
           state &= ~STATE_CONNECTED;
@@ -422,7 +423,7 @@ private:
   {
     if (state & STATE_WIFI_READY)
     {
-      httpClose();
+      tcpDisconnect();
       disconnectWifi(); // disconnect from AP
       delay(500);
       resetWifi();
