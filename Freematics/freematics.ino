@@ -22,7 +22,7 @@ static uint8_t lastFileSize = 0;
 class CTeleLogger : public COBDWIFI, public CDataLogger, public CMPU6050
 {
 public:
-  CTeleLogger() : state(0), feedid(0)
+  CTeleLogger() : state(0)
   {
   }
 
@@ -37,7 +37,7 @@ public:
   #if USE_MEMS
     // start I2C communication
     Wire.begin();
-    Serial.print("#MEMS... ");
+    Serial.print("MEMS... ");
     if (memsInit())
     {
       state |= STATE_MEMS_READY;
@@ -51,7 +51,7 @@ public:
 
   #if USE_ESP8266
     // initialize ESP8266 xBee module (if present)
-    Serial.print("#ESP8266... ");
+    Serial.print("ESP8266... ");
     xbBegin(XBEE_BAUDRATE);
     if (initWifi())
     {
@@ -63,13 +63,11 @@ public:
       Serial.println(buffer);
       standby();
     }
-
-    connectWifi();
   #endif //USE_ESP8266
 
   #if USE_OBD
     // initialize OBD communication
-    Serial.print("#OBD... ");
+    Serial.print("OBD... ");
     if (init())
     {
       state |= STATE_OBD_READY;
@@ -130,6 +128,7 @@ public:
       return 0;
     }
   }
+
   void flushData()
   {
     // flush SD data every 1KB
@@ -156,6 +155,14 @@ public:
 
     if (state & STATE_CONNECTED)
     {
+    #if USE_MEMS
+      // process MEMS data if available
+      if (state & STATE_MEMS_READY)
+      {
+          processMEMS();
+      }
+    #endif //USE_MEMS
+
     #if USE_OBD
       // process OBD data if connected
       if (state & STATE_OBD_READY)
@@ -163,13 +170,6 @@ public:
         processOBD();
       }
     #endif //USE_OBD
-
-    #if USE_MEMS
-      // process MEMS data if available
-      if (state & STATE_MEMS_READY) {
-          processMEMS();
-      }
-    #endif //USE_MEMS
 
       // read and log voltage at OBD2
       int v = getVoltage() * 100;
@@ -196,31 +196,36 @@ public:
         if (deviceTemp >= COOLING_DOWN_TEMP)
         {
           // device too hot, slow down communication a bit
-          Serial.print("Cool down (");
-          Serial.print(deviceTemp);
-          Serial.println(" C)");
-          delay(5000);
+          coolDown();
           break;
         }
-
       }
     } while (millis() - start < MIN_LOOP_TIME);
   }
 
 private:
 
+  void coolDown()
+  {
+    Serial.print("Cool down (");
+    Serial.print(deviceTemp);
+    Serial.println(" C)");
+    delay(5000);
+  }
+
 #if USE_ESP8266
-  void connectWifi()
+  bool connectWifi()
   {
     // attempt to join AP with pre-defined credential
-    for (byte n = 0; ;n++) {
+    for (byte n = 0; ;n++)
+    {
       delay(100);
-      Serial.print("#WIFI(SSID:");
+      Serial.print("WIFI (SSID:");
       Serial.print(WIFI_SSID);
       Serial.print(")... ");
       if (setupWifi())
       {
-        break;
+        return true;
       }
       else
       {
@@ -228,7 +233,7 @@ private:
         if (n >= MAX_ERRORS_RECONNECT)
         {
           // not in range of wifi
-          //standby();
+          return false;
         }
       }
     }
@@ -421,15 +426,7 @@ private:
 
   void standby()
   {
-    if (state & STATE_WIFI_READY)
-    {
-      tcpDisconnect();
-      disconnectWifi(); // disconnect from AP
-      delay(500);
-      resetWifi();
-    }
-
-    state &= ~(STATE_OBD_READY | STATE_WIFI_READY | STATE_CONNECTED);
+    state &= ~(STATE_OBD_READY | STATE_CONNECTED);
     Serial.print("Standby");
     // put OBD chips into low power mode
     enterLowPowerMode();
@@ -441,6 +438,30 @@ private:
       sleepms(250);
     }
     calibrateMEMS();
+
+    // check if there are files to send
+
+    // connect to wifi if in range
+    if (connectWifi())
+    {
+
+    }
+
+    // connect to tcp socket
+
+    // send file
+
+    // delete file on sd card
+
+    // go to low power wifi
+    if (state & STATE_WIFI_READY)
+    {
+      tcpDisconnect();
+      disconnectWifi(); // disconnect from AP
+      delay(500);
+      resetWifi();
+    }
+    state &= ~(STATE_WIFI_READY);
 
     for (;;)
     {
@@ -464,7 +485,7 @@ private:
       // check movement
       if (motion > START_MOTION_THRESHOLD)
       {
-        Serial.print("MOTION");
+        Serial.print("MOTION... ");
         Serial.println(motion);
         // try OBD reading
         leaveLowPowerMode();
@@ -516,18 +537,7 @@ private:
       deviceTemp = temp / 10;
   }
 
-  void dataIdleLoop()
-  {
-    // do something while waiting for data on SPI
-    if (state & STATE_MEMS_READY)
-    {
-      readMEMS();
-    }
-    delay(20);
-  }
-
   byte state;
-  uint16_t feedid;
 };
 
 static CTeleLogger logger;
